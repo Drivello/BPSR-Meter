@@ -637,7 +637,13 @@ input[type="text"] {
     height: 100px; /* Altura para centrar el icono */
 }
 
-#loading-indicator .fa-spinner {
+#loading-indicator .spinner {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    border: 4px solid rgba(255, 255, 255, 0.25);
+    border-top-color: rgba(255, 255, 255, 0.9);
+    border-radius: 50%;
     animation: spin 1.5s linear infinite; /* Animación de giro */
 }
 

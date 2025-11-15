@@ -3,6 +3,8 @@ const pb = require('./blueprotobuf');
 const Long = require('long');
 const pbjs = require('protobufjs/minimal');
 const fs = require('fs');
+const path = require('path');
+const { getDebugDir } = require(path.join(__dirname, '..', 'src', 'server', 'paths'));
 
 const monsterNames = require('../tables/monster_names.json');
 
@@ -481,7 +483,25 @@ class PacketProcessor {
                 this.userDataManager.setProfession(playerUid, professionName);
             }
         } catch (err) {
-            fs.writeFileSync('./SyncContainerData.dat', payloadBuffer);
+            const debugEnv = String(process.env.BPSR_DEBUG || '').trim().toLowerCase();
+            const debugEnabled = debugEnv === '1' || debugEnv === 'true' || debugEnv === 'yes' || debugEnv === 'on';
+            if (debugEnabled) {
+                try {
+                    const dir = getDebugDir();
+                    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                    const filename = `SyncContainerData-${ts}.dat`;
+                    const filePath = path.join(dir, filename);
+                    fs.writeFileSync(filePath, payloadBuffer);
+                    const files = fs.readdirSync(dir)
+                        .filter((f) => f.startsWith('SyncContainerData-') && f.endsWith('.dat'))
+                        .map((f) => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+                        .sort((a, b) => b.t - a.t);
+                    const keep = 10;
+                    for (let i = keep; i < files.length; i++) {
+                        try { fs.unlinkSync(path.join(dir, files[i].f)); } catch (_) {}
+                    }
+                } catch (_) {}
+            }
             this.logger.warn(`Failed to decode SyncContainerData for player ${currentUserUuid.shiftRight(16)}. Please report to developer`);
             throw err;
         }

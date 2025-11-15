@@ -1,0 +1,17 @@
+@startuml
+skinparam monochrome true
+participant Game
+participant Npcap
+participant Sniffer
+participant PacketProcessor as Parser
+participant UserDataManager as DataMgr
+participant Express as API
+participant Renderer as UI
+Game -> Npcap: TCP/IP packets
+Npcap -> Sniffer: captured frames
+Sniffer -> Parser: packets
+Parser -> DataMgr: update stats
+UI -> API: GET /api/data (token)
+API -> DataMgr: read stats
+API --> UI: JSON { code, user }
+@enduml

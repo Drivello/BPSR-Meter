@@ -1,0 +1,29 @@
+@startuml
+skinparam monochrome true
+actor User
+node Electron {
+  component Renderer as UI
+  component Main as ElectronMain
+}
+node NodeServer {
+  component ExpressAPI as API
+  component SocketIO as WS
+  component Sniffer
+  component PacketProcessor as Parser
+  component UserDataManager as DataMgr
+}
+node OS {
+  node DATA_DIR
+  node Npcap
+}
+User --> UI
+UI --> API
+UI --> WS
+ElectronMain --> NodeServer
+Sniffer --> Npcap
+Sniffer --> Parser
+Parser --> DataMgr
+API --> DataMgr
+WS --> DataMgr
+DataMgr --> DATA_DIR
+@enduml

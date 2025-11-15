@@ -14,3 +14,14 @@ dist/logs/
 /Prerequisites/npcap-1.83.exe
 pnpm-lock.yaml
 server - copia - copia.js
+
+# Environment & secrets
+.env
+.env.local
+
+# Debug dumps
+SyncContainerData.dat
+
+# Electron user data (per-user)
+userData/
+User Data/

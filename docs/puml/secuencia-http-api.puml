@@ -1,0 +1,14 @@
+@startuml
+skinparam monochrome true
+actor User
+participant Renderer as UI
+participant Express as API
+participant Middleware as Sec
+participant UserDataManager as DataMgr
+User -> UI: open index.html?token=...
+UI -> API: GET /api/data\nHeader: x-bpsr-token
+API -> Sec: CORS + rate-limit + token
+Sec --> API: ok
+API -> DataMgr: getAllUsersData
+API --> UI: 200 { code, user }
+@enduml

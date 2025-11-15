@@ -7,40 +7,17 @@ const { Lock } = require('./dataManager'); // Importar Lock desde dataManager
 
 const Cap = cap.Cap;
 
-const NPCAP_INSTALLER_PATH = require('path').join(__dirname, '..', '..', 'Dist', 'npcap-1.83.exe'); // Ajustar la ruta
-const fs = require('fs');
-const { spawn } = require('child_process');
-
-async function checkAndInstallNpcap(logger) {
+function ensureNpcapPresentOrFail(logger) {
     try {
         const devices = Cap.deviceList();
-        if (!devices || devices.length === 0 || devices.every(d => d.name.includes('Loopback'))) {
+        if (!devices || devices.length === 0 || devices.every((d) => d.name && d.name.includes('Loopback'))) {
             throw new Error('Npcap no detectado o no funcional.');
         }
         logger.info('Npcap detectado y funcional.');
-        return true;
     } catch (e) {
-        logger.warn(`Npcap no detectado o no funcional: ${e.message}`);
-        logger.info('Intentando instalar Npcap...');
-
-        if (!fs.existsSync(NPCAP_INSTALLER_PATH)) {
-            logger.error(`Instalador de Npcap no encontrado en: ${NPCAP_INSTALLER_PATH}`);
-            logger.info('Por favor, instala Npcap manualmente desde la carpeta Dist/ y reinicia la aplicación.');
-            return false;
-        }
-
-        try {
-            logger.info('Ejecutando instalador de Npcap. Por favor, sigue las instrucciones en pantalla.');
-            const npcapProcess = spawn(NPCAP_INSTALLER_PATH, [], { detached: true, stdio: 'ignore' });
-            npcapProcess.unref();
-
-            logger.info('Npcap installer lanzado. Por favor, instala Npcap y luego reinicia esta aplicación.');
-            return false;
-        } catch (spawnError) {
-            logger.error(`Error al ejecutar el instalador de Npcap: ${spawnError.message}`);
-            logger.info('Por favor, instala Npcap manualmente desde la carpeta Dist/ y reinicia la aplicación.');
-            return false;
-        }
+        logger.error(`Npcap no detectado o no funcional: ${e.message}`);
+        logger.error('Instala Npcap manualmente desde https://nmap.org/npcap/ y reinicia la aplicación.');
+        throw new Error('Npcap requerido no está instalado.');
     }
 }
 
@@ -260,10 +237,7 @@ class Sniffer {
     }
 
     async start(deviceNum, PacketProcessorClass) {
-        const npcapReady = await checkAndInstallNpcap(this.logger);
-        if (!npcapReady) {
-            throw new Error('Npcap no está listo. La aplicación debe salir.');
-        }
+        ensureNpcapPresentOrFail(this.logger);
 
         const devices = Cap.deviceList();
 

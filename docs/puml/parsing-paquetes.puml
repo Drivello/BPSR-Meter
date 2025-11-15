@@ -1,0 +1,14 @@
+@startuml
+skinparam monochrome true
+participant PacketProcessor as Parser
+participant UserDataManager as DataMgr
+== Notify ==
+Parser -> Parser: decode Notify/FrameDown
+Parser -> DataMgr: addDamage/addHealing
+== Container Data ==
+Parser -> Parser: decode SyncContainerData
+Parser -> DataMgr: setName/setFightPoint
+== Dirty Data ==
+Parser -> Parser: decode DirtyData
+Parser -> DataMgr: setAttrKV
+@enduml

@@ -5,12 +5,18 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fsPromises = require('fs').promises;
 const fs = require('fs');
+const { getSettingsPath, getLogsDir, safeJoin } = require('./paths');
 
-const SETTINGS_PATH = path.join('./settings.json');
-const LOGS_DPS_PATH = path.join('./logs_dps.json');
+const SETTINGS_PATH = getSettingsPath();
+const LOGS_DPS_PATH = path.join(getLogsDir(), 'logs_dps.json');
 
-function initializeApi(app, server, io, userDataManager, logger, globalSettings) {
-    app.use(cors());
+function initializeApi(app, server, io, userDataManager, logger, globalSettings, securityConfig, health) {
+    const allowedOrigins = (securityConfig && securityConfig.allowedOrigins) || [];
+    const requireToken = !securityConfig ? true : !!securityConfig.requireToken;
+    const apiToken = securityConfig ? securityConfig.apiToken : '';
+    const rateWindowMs = securityConfig && Number.isFinite(securityConfig.rateWindowMs) ? securityConfig.rateWindowMs : 1000;
+    const rateMax = securityConfig && Number.isFinite(securityConfig.rateMax) ? securityConfig.rateMax : 60;
+
     app.use(express.json());
     app.use(express.static(path.join(__dirname, '..', '..', 'public'))); // Ajustar la ruta
 
@@ -20,6 +26,43 @@ function initializeApi(app, server, io, userDataManager, logger, globalSettings)
 
     app.get('/favicon.ico', (req, res) => {
         res.sendFile(path.join(__dirname, '..', '..', 'icon.ico')); // Ajustar la ruta
+    });
+
+    // Healthcheck (no auth)
+    const healthPath = (health && health.path) || '/healthz';
+    const healthHandler = (req, res) => {
+        const ready = !!(health && health.ready);
+        return ready ? res.status(200).json({ status: 'ok' }) : res.status(503).json({ status: 'starting' });
+    };
+    app.get('/healthz', healthHandler);
+    if (healthPath !== '/healthz') app.get(healthPath, healthHandler);
+
+    // CORS estricto y seguridad para rutas /api/*
+    app.use('/api', cors({ origin: allowedOrigins }));
+
+    // Rate limiting básico en memoria por IP
+    const rateMap = new Map();
+    app.use('/api', (req, res, next) => {
+        const now = Date.now();
+        const key = req.ip || req.connection?.remoteAddress || 'unknown';
+        let rec = rateMap.get(key);
+        if (!rec || now > rec.resetAt) {
+            rec = { count: 0, resetAt: now + rateWindowMs };
+        }
+        rec.count += 1;
+        rateMap.set(key, rec);
+        if (rec.count > rateMax) {
+            return res.status(429).json({ code: 1, msg: 'Too Many Requests' });
+        }
+        next();
+    });
+
+    // Token obligatorio para /api/* si está habilitado
+    app.use('/api', (req, res, next) => {
+        if (!requireToken) return next();
+        const token = req.get('x-bpsr-token');
+        if (token && apiToken && token === apiToken) return next();
+        return res.status(401).json({ code: 1, msg: 'Unauthorized' });
     });
 
     app.get('/api/data', (req, res) => {
@@ -50,16 +93,15 @@ function initializeApi(app, server, io, userDataManager, logger, globalSettings)
     });
 
     app.post('/api/clear-logs', async (req, res) => {
-        const logsBaseDir = path.join(__dirname, '..', '..', 'logs'); // Ajustar la ruta
+        const logsBaseDir = getLogsDir();
         try {
             const files = await fsPromises.readdir(logsBaseDir);
             for (const file of files) {
-                const filePath = path.join(logsBaseDir, file);
+                let filePath;
+                try { filePath = safeJoin(logsBaseDir, file); } catch (_) { continue; }
                 await fsPromises.rm(filePath, { recursive: true, force: true });
             }
-            if (fs.existsSync(LOGS_DPS_PATH)) {
-                await fsPromises.unlink(LOGS_DPS_PATH);
-            }
+            try { if (fs.existsSync(LOGS_DPS_PATH)) { await fsPromises.unlink(LOGS_DPS_PATH); } } catch (e) {}
             console.log('¡Todos los archivos y directorios de log han sido limpiados!');
             res.json({
                 code: 0,
@@ -136,7 +178,8 @@ function initializeApi(app, server, io, userDataManager, logger, globalSettings)
 
     app.get('/api/history/:timestamp/summary', async (req, res) => {
         const { timestamp } = req.params;
-        const historyFilePath = path.join('./logs', timestamp, 'summary.json'); // Ajustar la ruta
+        if (!/^\d+$/.test(String(timestamp))) return res.status(400).json({ code: 1, msg: 'Invalid timestamp' });
+        const historyFilePath = path.join(getLogsDir(), timestamp, 'summary.json');
 
         try {
             const data = await fsPromises.readFile(historyFilePath, 'utf8');
@@ -164,7 +207,8 @@ function initializeApi(app, server, io, userDataManager, logger, globalSettings)
 
     app.get('/api/history/:timestamp/data', async (req, res) => {
         const { timestamp } = req.params;
-        const historyFilePath = path.join('./logs', timestamp, 'allUserData.json'); // Ajustar la ruta
+        if (!/^\d+$/.test(String(timestamp))) return res.status(400).json({ code: 1, msg: 'Invalid timestamp' });
+        const historyFilePath = path.join(getLogsDir(), timestamp, 'allUserData.json');
 
         try {
             const data = await fsPromises.readFile(historyFilePath, 'utf8');
@@ -192,7 +236,8 @@ function initializeApi(app, server, io, userDataManager, logger, globalSettings)
 
     app.get('/api/history/:timestamp/skill/:uid', async (req, res) => {
         const { timestamp, uid } = req.params;
-        const historyFilePath = path.join('./logs', timestamp, 'users', `${uid}.json`); // Ajustar la ruta
+        if (!/^\d+$/.test(String(timestamp))) return res.status(400).json({ code: 1, msg: 'Invalid timestamp' });
+        const historyFilePath = path.join(getLogsDir(), timestamp, 'users', `${uid}.json`);
 
         try {
             const data = await fsPromises.readFile(historyFilePath, 'utf8');
@@ -220,13 +265,14 @@ function initializeApi(app, server, io, userDataManager, logger, globalSettings)
 
     app.get('/api/history/:timestamp/download', async (req, res) => {
         const { timestamp } = req.params;
-        const historyFilePath = path.join('./logs', timestamp, 'fight.log'); // Ajustar la ruta
+        if (!/^\d+$/.test(String(timestamp))) return res.status(400).json({ code: 1, msg: 'Invalid timestamp' });
+        const historyFilePath = path.join(getLogsDir(), timestamp, 'fight.log');
         res.download(historyFilePath, `fight_${timestamp}.log`);
     });
 
     app.get('/api/history/list', async (req, res) => {
         try {
-            const data = (await fsPromises.readdir('./logs', { withFileTypes: true })) // Ajustar la ruta
+            const data = (await fsPromises.readdir(getLogsDir(), { withFileTypes: true }))
                 .filter((e) => e.isDirectory() && /^\d+$/.test(e.name))
                 .map((e) => e.name);
             res.json({
@@ -292,13 +338,13 @@ function initializeApi(app, server, io, userDataManager, logger, globalSettings)
         fs.writeFileSync(LOGS_DPS_PATH, JSON.stringify(logs, null, 2));
     }
 
-    app.post('/guardar-log-dps', (req, res) => {
+    app.post('/api/logs-dps', (req, res) => {
         const log = req.body;
         guardarLogDps(log);
         res.sendStatus(200);
     });
 
-    app.get('/logs-dps', (req, res) => {
+    app.get('/api/logs-dps', (req, res) => {
         let logs = [];
         if (fs.existsSync(LOGS_DPS_PATH)) {
             logs = JSON.parse(fs.readFileSync(LOGS_DPS_PATH, 'utf8'));

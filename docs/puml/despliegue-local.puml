@@ -1,0 +1,20 @@
+@startuml
+skinparam monochrome true
+node Windows {
+  node ElectronApp {
+    component BrowserWindow
+    component ElectronMain
+  }
+  node NodeJS {
+    component ExpressAPI
+    component SocketIO
+  }
+  node Data {
+    folder DATA_DIR
+  }
+}
+BrowserWindow --> ExpressAPI
+BrowserWindow --> SocketIO
+ElectronMain --> ExpressAPI
+ExpressAPI --> DATA_DIR
+@enduml

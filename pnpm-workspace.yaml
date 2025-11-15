@@ -1,3 +1,6 @@
 onlyBuiltDependencies:
   - cap
+  - electron
+  - electron-winstaller
+  - lzma-native
   - protobufjs

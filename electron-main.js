@@ -1,9 +1,12 @@
 
 const { app, BrowserWindow, ipcMain } = require('electron');
+try { require('dotenv').config(); } catch (e) {}
 const path = require('path');
-const { exec, fork } = require('child_process');
-const net = require('net'); // Necesario para checkPort
+const { fork } = require('child_process');
+const { findAvailablePort } = require(path.join(__dirname, 'src', 'utils', 'port'));
 const fs = require('fs');
+const crypto = require('crypto');
+const http = require('http');
 
 // Función para loguear en archivo seguro para entorno empaquetado
 function logToFile(msg) {
@@ -26,66 +29,25 @@ let server_port = 8989; // Puerto inicial
 let isLocked = false; // Estado inicial del candado: desbloqueado
 logToFile('==== INICIO DE ELECTRON ====');
 
-    // Función para verificar si un puerto está en uso
-    const checkPort = (port) => {
-        return new Promise((resolve) => {
-            const server = net.createServer();
-            server.once('error', () => resolve(false));
-            server.once('listening', () => {
-                server.close(() => resolve(true));
-            });
-            server.listen(port);
-        });
-    };
 
-    async function findAvailablePort() {
-        let port = 8989;
-        while (true) {
-            if (await checkPort(port)) {
-                return port;
-            }
-            console.warn(`Port ${port} is already in use, trying next...`);
-            port++;
-        }
-    }
-
-    // Función para matar el proceso que está usando un puerto específico
-    async function killProcessUsingPort(port) {
-        return new Promise((resolve) => {
-            exec(`netstat -ano | findstr :${port}`, (error, stdout, stderr) => {
-                if (stdout) {
-                    const lines = stdout.split('\n').filter(line => line.includes('LISTENING'));
-                    if (lines.length > 0) {
-                        const pid = lines[0].trim().split(/\s+/).pop();
-                        if (pid) {
-                            console.log(`Killing process ${pid} using port ${port}...`);
-                            exec(`taskkill /PID ${pid} /F`, (killError, killStdout, killStderr) => {
-                                if (killError) {
-                                    console.error(`Error killing process ${pid}: ${killError.message}`);
-                                } else {
-                                    console.log(`Process ${pid} killed successfully.`);
-                                }
-                                resolve();
-                            });
-                        } else {
-                            resolve();
-                        }
-                    } else {
-                        resolve();
-                    }
-                } else {
-                    resolve();
-                }
-            });
-        });
-    }
+    
 
     async function createWindow() {
-        logToFile('Intentando matar procesos en el puerto 8989...');
-        await killProcessUsingPort(8989);
+        const defaultDataDir = path.join(app.getPath('userData'), 'bpsr');
+        try { fs.mkdirSync(defaultDataDir, { recursive: true }); } catch (e) {}
 
-        server_port = await findAvailablePort();
-        logToFile('Puerto disponible encontrado: ' + server_port);
+        const envPort = parseInt(process.env.BPSR_PORT || '', 10);
+        const envBase = parseInt(process.env.BPSR_PORT_BASE || '', 10);
+        const basePort = Number.isFinite(envBase) && envBase > 0 ? envBase : 8989;
+        if (Number.isFinite(envPort) && envPort > 0) {
+            server_port = envPort;
+            logToFile('Usando puerto especificado por BPSR_PORT: ' + server_port);
+        } else {
+            server_port = await findAvailablePort(basePort, '127.0.0.1');
+            logToFile('Puerto disponible encontrado: ' + server_port + ' (base ' + basePort + ')');
+        }
+
+        const sessionToken = crypto.randomBytes(24).toString('hex');
 
         mainWindow = new BrowserWindow({
             width: 650,
@@ -98,6 +60,10 @@ logToFile('==== INICIO DE ELECTRON ====');
                 preload: path.join(__dirname, 'preload.js'),
                 nodeIntegration: false,
                 contextIsolation: true,
+                sandbox: true,
+                webSecurity: true,
+                allowRunningInsecureContent: false,
+                enableRemoteModule: false,
             },
             icon: path.join(__dirname, 'icon.ico'),
         });
@@ -116,32 +82,49 @@ logToFile('==== INICIO DE ELECTRON ====');
         logToFile('Lanzando server.js en puerto ' + server_port + ' con ruta: ' + serverPath);
 
         // Usar fork para lanzar el servidor como proceso hijo
-        const { fork } = require('child_process');
         serverProcess = fork(serverPath, [server_port], {
             stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
-            execArgv: []
+            execArgv: [],
+            env: { ...process.env, BPSR_DATA_DIR_DEFAULT: defaultDataDir, BPSR_API_TOKEN: sessionToken }
         });
 
-        // Variables para controlar el arranque del servidor
-        if (typeof createWindow.serverLoaded === 'undefined') createWindow.serverLoaded = false;
-        if (typeof createWindow.serverTimeout === 'undefined') createWindow.serverTimeout = null;
-        createWindow.serverLoaded = false;
-        createWindow.serverTimeout = setTimeout(() => {
-            if (!createWindow.serverLoaded) {
-                logToFile('ERROR: El servidor no respondió a tiempo.');
-                mainWindow.loadURL('data:text/html,<h2 style="color:red">Error: El servidor no respondió a tiempo.<br>Revisa iniciar_log.txt para más detalles.</h2>');
-            }
-        }, 10000); // 10 segundos de espera
+        const healthPath = process.env.BPSR_HEALTH_PATH && process.env.BPSR_HEALTH_PATH.trim() ? process.env.BPSR_HEALTH_PATH.trim() : '/healthz';
+        const startupTimeoutMs = Number.isFinite(parseInt(process.env.BPSR_STARTUP_TIMEOUT_MS, 10)) ? parseInt(process.env.BPSR_STARTUP_TIMEOUT_MS, 10) : 15000;
+        let serverBaseUrl = `http://localhost:${server_port}`;
+
+        const waitForHealth = (baseUrl, timeoutMs) => new Promise((resolve, reject) => {
+            const start = Date.now();
+            const poll = () => {
+                if (Date.now() - start > timeoutMs) {
+                    return reject(new Error('Timeout esperando /healthz'));
+                }
+                try {
+                    const req = http.get(baseUrl + healthPath, (res) => {
+                        if (res.statusCode === 200) {
+                            resolve();
+                        } else {
+                            setTimeout(poll, 300);
+                        }
+                    });
+                    req.on('error', () => setTimeout(poll, 300));
+                    req.setTimeout(2000, () => {
+                        try { req.destroy(); } catch (_) {}
+                        setTimeout(poll, 300);
+                    });
+                } catch (_) {
+                    setTimeout(poll, 300);
+                }
+            };
+            poll();
+        });
 
         serverProcess.stdout.on('data', (data) => {
-            logToFile('server stdout: ' + data);
-            const match = data.toString().match(/Servidor web iniciado en (http:\/\/localhost:\d+)/);
+            const text = data.toString();
+            logToFile('server stdout: ' + text);
+            const match = text.match(/Servidor web iniciado en (http:\/\/localhost:\d+)/);
             if (match && match[1]) {
-                const serverUrl = match[1];
-                logToFile('Cargando URL en ventana: ' + serverUrl + '/index.html');
-                mainWindow.loadURL(`${serverUrl}/index.html`);
-                createWindow.serverLoaded = true;
-                clearTimeout(createWindow.serverTimeout);
+                serverBaseUrl = match[1];
+                logToFile('Detectado URL servidor: ' + serverBaseUrl);
             }
         });
         serverProcess.stderr.on('data', (data) => {
@@ -151,34 +134,22 @@ logToFile('==== INICIO DE ELECTRON ====');
             logToFile('server process exited with code ' + code);
         });
 
-        let serverLoaded = false;
-        let serverTimeout = setTimeout(() => {
-            if (!serverLoaded) {
-                logToFile('ERROR: El servidor no respondió a tiempo.');
-                mainWindow.loadURL('data:text/html,<h2 style="color:red">Error: El servidor no respondió a tiempo.<br>Revisa iniciar_log.txt para más detalles.</h2>');
-            }
-        }, 10000); // 10 segundos de espera
-
-        serverProcess.stdout.on('data', (data) => {
-            logToFile('server stdout: ' + data);
-            // Buscar la URL del servidor en la salida del servidor
-            const match = data.toString().match(/Servidor web iniciado en (http:\/\/localhost:\d+)/);
-            if (match && match[1]) {
-                const serverUrl = match[1];
-                logToFile('Cargando URL en ventana: ' + serverUrl + '/index.html');
-                mainWindow.loadURL(`${serverUrl}/index.html`);
-                serverLoaded = true;
-                clearTimeout(serverTimeout);
-            }
-        });
-
-        serverProcess.stderr.on('data', (data) => {
-            logToFile('server stderr: ' + data);
-        });
-
-        serverProcess.on('close', (code) => {
-            logToFile('server process exited with code ' + code);
-        });
+        // Esperar readiness antes de cargar UI
+        try {
+            logToFile(`Esperando readiness en ${serverBaseUrl}${healthPath} (timeout ${startupTimeoutMs}ms)...`);
+            await waitForHealth(serverBaseUrl, startupTimeoutMs);
+            logToFile('Backend listo, cargando UI...');
+            mainWindow.loadURL(`${serverBaseUrl}/index.html?token=${sessionToken}`);
+        } catch (err) {
+            logToFile('ERROR: Startup timeout - ' + err.message);
+            try { serverProcess.kill('SIGTERM'); } catch (_) {}
+            const logPath = path.join(app.getPath('userData'), 'iniciar_log.txt');
+            const html = `<div style="font-family:sans-serif;padding:16px;color:#c00;">
+                <h2>Error: El servidor no respondió a tiempo</h2>
+                <p>Revisa el log en: <code>${logPath.replace(/\\/g, '/')}</code></p>
+            </div>`;
+            mainWindow.loadURL('data:text/html,' + encodeURIComponent(html));
+        }
 
         mainWindow.on('closed', () => {
             mainWindow = null;

@@ -1,6 +1,7 @@
 const fsPromises = require('fs').promises;
 const path = require('path');
 const skillConfig = require('../../tables/skill_names.json').skill_names; // Ajustar la ruta
+const { getLogsDir } = require('./paths');
 
 class Lock {
     constructor() {
@@ -510,7 +511,7 @@ class UserDataManager {
     async addLog(log) {
         if (!this.globalSettings.enableFightLog) return;
 
-        const logDir = path.join('./logs', String(this.startTime));
+        const logDir = path.join(getLogsDir(), String(this.startTime));
         const logFile = path.join(logDir, 'fight.log');
         const timestamp = new Date().toISOString();
         const logEntry = `[${timestamp}] ${log}\n`;
@@ -653,7 +654,7 @@ class UserDataManager {
             const endTime = Date.now();
             const users = usersToSave || this.users;
             const timestamp = startTime || this.startTime;
-            const logDir = path.join('./logs', String(timestamp));
+            const logDir = path.join(getLogsDir(), String(timestamp));
             const usersDir = path.join(logDir, 'users');
             const summary = {
                 startTime: timestamp,

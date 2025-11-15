@@ -1,6 +1,12 @@
 // Estado global para modo Lite
 let isLiteMode = false;
 let liteModeType = 'dps'; // 'dps' o 'healer'
+const API_TOKEN = new URLSearchParams(window.location.search).get('token');
+function apiFetch(input, init = {}) {
+    init.headers = Object.assign({}, init.headers || {});
+    if (API_TOKEN) init.headers['x-bpsr-token'] = API_TOKEN;
+    return fetch(input, init);
+}
 const professionMap = {
     // Clases Principales
     '雷影剑士': { name: 'Stormblade', icon: 'Stormblade.png', role: 'dps' },
@@ -140,7 +146,7 @@ const professionMap = {
             if (window.electronAPI) {
                 window.electronAPI.onLockStateChanged((locked) => {
                     isLocked = locked;
-                    lockButton.innerHTML = isLocked ? '<i class="fa-solid fa-lock"></i>' : '<i class="fa-solid fa-lock-open"></i>';
+                    lockButton.textContent = isLocked ? '🔒' : '🔓';
                     lockButton.title = isLocked ? 'Desbloquear posición' : 'Bloquear posición';
                     document.body.classList.toggle('locked', isLocked); // Añadir/quitar clase al body
                 });
@@ -199,7 +205,7 @@ const professionMap = {
     }
 
     function resetDpsMeter() {
-        fetch('/api/clear');
+        apiFetch('/api/clear');
         dpsTimerDiv.style.display = 'none';
         dpsTimerDiv.innerText = '';
         console.log('Medidor reiniciado.');
@@ -212,7 +218,7 @@ const professionMap = {
     async function syncData() {
         // No modificar el estado visual aquí, se gestiona en updateSyncButtonState
         try {
-            await fetch('/api/sync', { method: 'POST' });
+            await apiFetch('/api/sync', { method: 'POST' });
             console.log('Datos sincronizados internamente.');
         } catch (error) {
             console.error('Error al sincronizar datos:', error);
@@ -276,7 +282,7 @@ const professionMap = {
     }
 
     async function fetchLogs() {
-        const res = await fetch('/logs-dps');
+        const res = await apiFetch('/api/logs-dps');
         return await res.json();
     }
 
@@ -373,9 +379,9 @@ const professionMap = {
         const container = document.getElementById('player-bars-container');
         try {
             const [dataRes, diccRes, settingsRes] = await Promise.all([
-                fetch('/api/data'),
-                fetch('/api/diccionario'),
-                fetch('/api/settings')
+                apiFetch('/api/data'),
+                apiFetch('/api/diccionario'),
+                apiFetch('/api/settings')
             ]);
             const userData = await dataRes.json();
             const diccionarioData = await diccRes.json();
@@ -464,9 +470,7 @@ const professionMap = {
                     return `<div class="lite-bar" data-lite="true" data-rank="${u.rank}">
                         <div class="lite-bar-fill" style="width: ${barFillWidth}%; background: ${barFillBackground};"></div>
                         <div class="lite-bar-content" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; justify-content: space-between;">
-                            <div class="skill-analysis-button" title="Análisis de Habilidades">
-                                <i class="fa-solid fa-chart-bar"></i>
-                            </div>
+                            <div class="skill-analysis-button" title="Análisis de Habilidades"><span class="icon-chart">📊</span></div>
                             <div style="display: flex; align-items: center; gap: 5px;">
                                 <img class="lite-bar-icon" src="icons/${prof.icon}" alt="icon" style="margin-left:2px; margin-right:5px;" />
                                 <span class="lite-bar-name">${nombre}</span>
@@ -503,9 +507,7 @@ const professionMap = {
                     return `<div class="player-bar" data-rank="${u.rank}">
                         <div class="progress-fill" style="width: ${u.damagePercent}%; background: ${dpsColor}"></div>
                         <div class="bar-content">
-                            <div class="skill-analysis-button" title="Análisis de Habilidades">
-                                <i class="fa-solid fa-chart-bar"></i>
-                            </div>
+                            <div class="skill-analysis-button" title="Análisis de Habilidades"><span class="icon-chart">📊</span></div>
                             <div class="column name-col">
                                 <span class="player-name">${nombre}</span>
                                 <div class="additional-stat-row" style="height: 18px; margin-top: 1px; margin-bottom: 1px;">

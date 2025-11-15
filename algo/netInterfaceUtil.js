@@ -1,4 +1,3 @@
-const { exec } = require('child_process');
 const cap = require('cap');
 
 // Filter virtual adapters
@@ -41,33 +40,6 @@ function detectTraffic(deviceIndex, devices) {
     });
 }
 
-async function findByRoute(devices) {
-    try {
-        const stdout = await new Promise((resolve, reject) => {
-            exec('route print 0.0.0.0', (error, stdout) => {
-                if (error) reject(error);
-                else resolve(stdout);
-            });
-        });
-
-        const defaultInterface = stdout
-            .split('\n')
-            .find((line) => line.trim().startsWith('0.0.0.0'))
-            ?.trim()
-            .split(/\s+/)[3];
-
-        if (!defaultInterface) return undefined;
-
-        const targetInterface = Object.entries(devices).find(([, device]) =>
-            device.addresses.find((address) => address.addr === defaultInterface),
-        )?.[0];
-
-        return parseInt(targetInterface);
-    } catch (error) {
-        return undefined;
-    }
-}
-
 async function findDefaultNetworkDevice(devices) {
     try {
         // Get physical adapters
@@ -77,7 +49,7 @@ async function findDefaultNetworkDevice(devices) {
         });
 
         if (physical.length === 0) {
-            return await findByRoute(devices);
+            return undefined;
         }
 
         // Detect traffic on physical adapters
@@ -97,14 +69,8 @@ async function findDefaultNetworkDevice(devices) {
             return best.index;
         }
 
-        // Fallback to route table
-        const routeIndex = await findByRoute(devices);
-        if (routeIndex !== undefined && devices[routeIndex] && isVirtual(devices[routeIndex].description || '')) {
-            console.log('Route table selected virtual adapter, using first physical adapter instead');
-            return parseInt(physical[0][0]);
-        }
-
-        return routeIndex;
+        // Fallback to first physical adapter
+        return parseInt(physical[0][0]);
     } catch (error) {
         return undefined;
     }

@@ -1,0 +1,13 @@
+@startuml
+skinparam monochrome true
+actor User
+participant Renderer as UI
+participant SocketIO as WS
+participant Auth as Sec
+participant DataMgr
+User -> UI: open app
+UI -> WS: connect { auth.token }
+WS -> Sec: token check
+Sec --> WS: ok/unauthorized
+WS -> DataMgr: subscribe/push data
+@enduml
